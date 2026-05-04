@@ -9,23 +9,25 @@ The repository contains an end-to-end implementation of the OG–NSD pipeline de
 
 ### Repository layout
 ```
-README.md                   ← This document (methodology + hands-on instructions)
-og_nsd/                     ← Python package with reusable pipeline modules
-  config.py                 ← Dataclass for configuring runs
-  llm.py                    ← OpenAI adapter + heuristic fallback LLM
-  ontology.py               ← Graph assembly helpers built on rdflib
-  pipeline.py               ← High-level orchestration logic
-  queries.py                ← CQ loader/runner for SPARQL ASK suites
-  reasoning.py              ← Optional owlready2 + Pellet reasoning hooks
-  reporting.py              ← JSON report builder
-  requirements.py           ← JSON/JSONL requirement ingestion helpers
-  shacl.py                  ← SHACL validation wrapper (pySHACL)
-scripts/run_pipeline.py     ← CLI entry point wrapping `OntologyDraftingPipeline`
-requirements.txt            ← Minimal Python dependencies (rdflib, pyshacl, owlready2)
-gold/                       ← Domain assets (ATM gold ontology + SHACL shapes)
-atm_requirements.jsonl      ← Benchmark requirements used in the paper
-baseline_requirements.jsonl
-atm_cqs.rq                  ← CQ suite for coverage evaluation
+README.md
+og_nsd/                     ← Python package (pipeline modules)
+configs/                    ← Core experiment profiles E1–E6 (see configs/README.md)
+data/                       ← Two primary corpora (ATM, health) + auxiliary bundle; see data/README.md & data/registry.json
+  domains/atm/              ← ATM TTL assets (gold, context TBox, SHACL shapes)
+  domains/health/           ← Healthcare domain TTL + shapes
+  requirements/             ← JSONL requirement corpora
+  queries/                  ← SPARQL ASK competency-question suites (.rq)
+  splits/                   ← Dev/test requirement ID lists
+  auxiliary/                ← Exemplars, stress JSONL, optional third-domain seed
+  db/                       ← Reserved for local DB / exports (empty by default)
+scripts/                    ← CLI runners (`run_pipeline`, E1–E6, journal tooling)
+runs/                       ← Generated experiment outputs (gitignored except README)
+paper/
+  workshop/                 ← ACM-style workshop LaTeX sources
+  journal/                  ← IEEE-style journal LaTeX skeleton
+tests/                      ← Unit tests
+docs/                       ← Optional notes (empty scaffold; see docs/README.md)
+requirements.txt
 ```
 
 ### Installation
@@ -54,16 +56,16 @@ atm_cqs.rq                  ← CQ suite for coverage evaluation
    export OPENAI_API_KEY="sk-..."
    ```
    The default mode (`--llm-mode heuristic`) is offline-safe and derives axioms with lightweight pattern rules for reproducibility.
-   The provided ATM ontology-aware config (`configs/atm_ontology_aware.json`) is now set to use the OpenAI backend, so ensure
+   The provided ATM ontology-aware config (`configs/e3_ontology_aware_atm.json`) is now set to use the OpenAI backend, so ensure
    `OPENAI_API_KEY` is configured (or override `llm_mode` to `heuristic`) before running that example.
 
 ### Running the pipeline (ATM example)
 ```powershell
 python scripts/run_pipeline.py `
-  --requirements atm_requirements.jsonl `
-  --shapes gold/shapes_atm.ttl `
-  --base gold/atm_gold.ttl `
-  --cqs atm_cqs.rq `
+  --requirements data/requirements/atm_requirements.jsonl `
+  --shapes data/shapes/shapes_atm.ttl `
+  --base data/domains/atm/atm_gold.ttl `
+  --cqs data/queries/atm_cqs.rq `
   --output build/atm_generated.ttl `
   --report build/atm_report.json `
   --max-reqs 50 `
@@ -72,10 +74,10 @@ python scripts/run_pipeline.py `
 **macOS (Terminal / zsh)**
 ```bash
 python scripts/run_pipeline.py \
-  --requirements atm_requirements.jsonl \
-  --shapes gold/shapes_atm.ttl \
-  --base gold/atm_gold.ttl \
-  --cqs atm_cqs.rq \
+  --requirements data/requirements/atm_requirements.jsonl \
+  --shapes data/shapes/shapes_atm.ttl \
+  --base data/domains/atm/atm_gold.ttl \
+  --cqs data/queries/atm_cqs.rq \
   --output build/atm_generated.ttl \
   --report build/atm_report.json \
   --max-reqs 50 \
@@ -90,7 +92,7 @@ To reproduce the raw, no-assistance baseline (`pred.ttl` in the paper's notation
 
 ```bash
 python scripts/run_pipeline.py \
-  --requirements baseline_requirements.jsonl \
+  --requirements data/requirements/atm_requirements.jsonl \
   --output build/pred.ttl \
   --llm-mode openai \
   --max-reqs 50 \
@@ -109,18 +111,18 @@ Key points:
 | Tune the repair loop | Set `--iterations` and `--temperature` to control how many violation→prompt rounds the pipeline attempts. |
 | Use another domain | Point `--shapes`, `--base`, and `--cqs` to the new ontology assets. |
 | Save intermediate Turtle | Edit `PipelineConfig` (see `og_nsd/config.py`) or extend `scripts/run_pipeline.py`. |
-| Turn on ontology-aware prompting | Add `--use-ontology-context --ontology-context gold/atm_gold.ttl` (or rely on `--base` as the grounding file) to feed schema vocabulary into the LLM prompt without copying gold axioms. |
+| Turn on ontology-aware prompting | Add `--use-ontology-context --ontology-context data/domains/atm/atm_gold.ttl` (or rely on `--base` as the grounding file) to feed schema vocabulary into the LLM prompt without copying gold axioms. |
 
 Example ontology-aware draft run (OpenAI-backed):
 ```bash
 python scripts/run_pipeline.py \
-  --requirements atm_requirements.jsonl \
-  --shapes gold/shapes_atm.ttl \
+  --requirements data/requirements/atm_requirements.jsonl \
+  --shapes data/shapes/shapes_atm.ttl \
   --output build/atm_generated.ttl \
   --report build/atm_report.json \
   --llm-mode openai \
   --use-ontology-context \
-  --ontology-context gold/atm_gold.ttl \
+  --ontology-context data/domains/atm/atm_gold.ttl \
   --iterations 1
 ```
 
@@ -129,25 +131,25 @@ The following scripts map directly to the experiments in Table A. Each script wr
 
 ```bash
 # E1: LLM-only baseline
-python scripts/run_e1_llm_only.py --config configs/atm_e1_llm_only.json
+python scripts/run_e1_llm_only.py --config configs/e1_llm_only_atm.json
 
 # E2: Symbolic-only baseline (heuristic rules + SHACL/Reasoner)
-python scripts/run_e2_symbolic_only.py --config configs/atm_e2_symbolic_only.json
+python scripts/run_e2_symbolic_only.py --config configs/e2_symbolic_atm.json
 
 # E3: Ours (no-repair)
-python scripts/run_atm_examples.py --config configs/atm_ontology_aware.json
+python scripts/run_atm_examples.py --config configs/e3_ontology_aware_atm.json
 
 # E4: Ours (full closed-loop)
-python scripts/run_e4_iterative.py --config configs/atm_e4_iterative.json
+python scripts/run_e4_iterative.py --config configs/e4_iterative_repair_atm.json
 
-# E5: Cross-domain (edit configs/e5_cross_domain.json to add domains)
-python scripts/run_e5_cross_domain.py --config configs/e5_cross_domain.json
+# E5: Cross-domain (edit domains inside configs/e5_cross_domain_manifest.json)
+python scripts/run_e5_cross_domain.py --config configs/e5_cross_domain_manifest.json
 
 # E6: CQ-oriented (per-iteration CQ summary)
-python scripts/run_e6_cq_oriented.py --config configs/atm_e6_cq_oriented.json
+python scripts/run_e6_cq_oriented.py --config configs/e6_cq_oriented_atm.json
 ```
 
-The default E5 configuration now runs two domains: the ATM stack (`configs/atm_e5_cross_domain.json`) and a healthcare stack (`configs/health_ontology_aware.json`) built from `health_requirements.jsonl`, `gold/health_gold.ttl`, `gold/shapes_health.ttl`, and `health_cqs.rq`. Both use `llm_mode=openai`; add more domain blocks in `configs/e5_cross_domain.json` as needed. The healthcare assets mirror the ATM complexity with a similar number of requirements and constrained triples to exercise cross-domain behavior on comparable difficulty. If you need an offline/quota-safe run, pass `--llm-mode heuristic` to `scripts/run_e5_cross_domain.py`.
+E5 uses a single manifest, `configs/e5_cross_domain_manifest.json`: its `domains` array holds inline ATM and healthcare blocks (add more domains there if needed). Optional additional domains for extended studies go in the same file under `extra_domains` (used by `run_execution_plan.py` step 9). Paths use `data/requirements/health_requirements.jsonl`, `data/domains/health/health_gold.ttl`, `data/shapes/shapes_health.ttl`, and `data/queries/health_cqs.rq` for health. Both default to `llm_mode=openai`. For offline runs, pass `--llm-mode heuristic` to `scripts/run_e5_cross_domain.py`.
 
 ### Development tips
 - The pipeline is modular: swap in a domain-specific LLM by subclassing `LLMClient` or plug in another validator by editing `og_nsd/shacl.py`.
@@ -222,8 +224,6 @@ Our pipeline can be understood as an instance of Counterexample-Guided Inductive
 Given preloaded ontologies $O$ and their vocabularies $A$, we ground the LLM with (i) preferred labels and synonyms, (ii) domain relations, and (iii) naming/typing conventions (e.g., class vs. object property) to reduce semantic drift. We use few-shot exemplars in Turtle with comments mapping NL phrases to OWL axioms; Listing 1 shows a minimal example.
 
 **Component 1 (E3) — Ontology-Aware Prompting.** The ontology-aware mode redraws the ontology from the requirements text but constrains the vocabulary using a schema extracted from the gold ontology. The gold TTL is never injected verbatim; instead, a structured grounding context is built from classes, object properties with domain/range, datatype properties with datatypes, labels/comments, and prefix rules. The prompt is organised into three sections: (A) allowed vocabulary and domain/range constraints, (B) drafting specifications that forbid inventing names outside the schema and enforce namespace alignment, and (C) the requirements input (identical to the E1 baseline). Execution order is: requirements → ontology-aware prompting → fresh LLM draft → reasoner/SHACL → metrics/CQs. This keeps the raw baseline (`pred.ttl`) intact while guiding a new draft toward the gold schema without copying it. In this mode the gold/base TTL is used only for schema grounding and **is not merged** into the drafted graph, ensuring the LLM output remains a fresh ontology built solely from the requirements.
-
-Για λεπτομερή ελληνική τεχνική περιγραφή, δείτε το νέο έγγραφο στο `docs/component1.md`.
 
 The ontology-aware flow is intentionally “guided but not copied” and mirrors the following checklist:
 1. **Starting point.** The draft always begins from the requirements text, not from the baseline `pred.ttl`. A fresh LLM run is triggered with a guided prompt, leaving the raw baseline untouched.
@@ -410,7 +410,7 @@ Coverage of SHACL shapes, dependency on available domain ontologies, token limit
 ## VIII. Reproducibility
 - **Code and prompts:** The current repository revision contains all scripts and default prompts; commit hashes in experiment logs can be resolved via Git history.
 - **Datasets:** The ATM, healthcare, and automotive requirement snippets ship as JSONL files in the repo and are curated from public examples that permit redistribution.
-- **Ontologies/SHACL:** Domain ontologies and shapes live under `gold/` with stable IRIs so runs are repeatable.
+- **Ontologies/SHACL:** Domain ontologies and shapes live under `data/domains/` with stable IRIs so runs are repeatable.
 - **Config:** Model names, seeds, hardware, and runtime budgets are explicit CLI arguments (`scripts/run_pipeline.py --help`).
 
 ## IX. Conclusion

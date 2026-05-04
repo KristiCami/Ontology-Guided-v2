@@ -1,0 +1,38 @@
+PREFIX retail: <http://example.org/retail#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# CQ1: Orders are linked to a customer
+ASK WHERE {
+  ?o a retail:Order ;
+     retail:placedBy ?c .
+  ?c a retail:Customer .
+}
+
+# CQ2: Order lines point to products
+ASK WHERE {
+  ?line a retail:OrderLine ;
+        retail:lineProduct ?p .
+  ?p a retail:Product .
+}
+
+# CQ3: Products have non-negative prices
+ASK WHERE {
+  ?p a retail:Product ;
+     retail:unitPrice ?price .
+  FILTER(datatype(?price) = xsd:decimal && ?price >= 0)
+}
+
+# CQ4: Inventory records track available quantity
+ASK WHERE {
+  ?ir a retail:InventoryRecord ;
+      retail:inventoryProduct ?p ;
+      retail:availableQty ?qty .
+  FILTER(?qty >= 0)
+}
+
+# CQ5: Orders have payment relation
+ASK WHERE {
+  ?o a retail:Order ;
+     retail:paidBy ?payment .
+  ?payment a retail:Payment .
+}

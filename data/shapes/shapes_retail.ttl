@@ -1,0 +1,32 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix retail: <http://example.org/retail#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+retail:OrderShape a sh:NodeShape ;
+  sh:targetClass retail:Order ;
+  sh:property [ sh:path retail:placedBy ; sh:class retail:Customer ; sh:minCount 1 ; sh:maxCount 1 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:hasOrderLine ; sh:class retail:OrderLine ; sh:minCount 1 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:orderDate ; sh:datatype xsd:dateTime ; sh:minCount 1 ] ;
+  sh:property [ sh:path retail:orderStatus ; sh:datatype xsd:string ; sh:minCount 1 ] .
+
+retail:OrderLineShape a sh:NodeShape ;
+  sh:targetClass retail:OrderLine ;
+  sh:property [ sh:path retail:lineProduct ; sh:class retail:Product ; sh:minCount 1 ; sh:maxCount 1 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:quantity ; sh:datatype xsd:integer ; sh:minCount 1 ; sh:minInclusive 1 ; sh:severity sh:Violation ] .
+
+retail:ProductShape a sh:NodeShape ;
+  sh:targetClass retail:Product ;
+  sh:property [ sh:path retail:sku ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:unitPrice ; sh:datatype xsd:decimal ; sh:minCount 1 ; sh:minInclusive 0 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:belongsToCategory ; sh:class retail:Category ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+retail:InventoryShape a sh:NodeShape ;
+  sh:targetClass retail:InventoryRecord ;
+  sh:property [ sh:path retail:inventoryProduct ; sh:class retail:Product ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path retail:availableQty ; sh:datatype xsd:integer ; sh:minCount 1 ; sh:minInclusive 0 ; sh:severity sh:Violation ] .
+
+retail:PaymentShape a sh:NodeShape ;
+  sh:targetClass retail:Payment ;
+  sh:property [ sh:path retail:paymentAmount ; sh:datatype xsd:decimal ; sh:minCount 1 ; sh:minInclusive 0 ; sh:severity sh:Violation ] ;
+  sh:property [ sh:path retail:paymentMethod ; sh:datatype xsd:string ; sh:minCount 1 ] ;
+  sh:property [ sh:path retail:paymentTime ; sh:datatype xsd:dateTime ; sh:minCount 1 ] .

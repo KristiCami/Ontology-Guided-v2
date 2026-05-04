@@ -1,8 +1,0 @@
-{
-  "precision": 0.0755,
-  "recall": 0.1143,
-  "f1": 0.0909,
-  "pred_triples": 212,
-  "gold_triples": 140,
-  "overlap_triples": 16
-}

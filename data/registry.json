@@ -1,0 +1,92 @@
+{
+  "paper_data_story": "three_primary_one_auxiliary",
+  "primary_datasets": [
+    {
+      "id": "atm",
+      "paper_name": "ATM / banking requirements (main benchmark)",
+      "role": "Primary A — full OG–NSD stack using ATM gold ontology",
+      "paths": {
+        "requirements_full": "data/requirements/atm_requirements.jsonl",
+        "requirements_baseline_subset": "data/requirements/atm_requirements.jsonl",
+        "gold_reference": "data/domains/atm/atm_gold.ttl",
+        "grounding_tbox": "data/domains/atm/atm_gold.ttl",
+        "schema_context_optional": "data/domains/atm/atm_gold.ttl",
+        "shacl_shapes": "data/shapes/shapes_atm.ttl",
+        "competency_questions": "data/queries/atm_cqs.rq"
+      },
+      "journal_claims": [
+        "Structural validity (SHACL)",
+        "Logical checks (reasoner)",
+        "Functional adequacy (CQ suite)",
+        "Iterative repair dynamics"
+      ],
+      "metadata_to_fill": {
+        "source": "Source document URL: https://www.cs.toronto.edu/~sme/CSC340F/2005/assignments/inspections/atm.pdf (\"Requirements document for an automated teller machine network\"). ATM requirement statements were extracted and normalized from this document.",
+        "license": "License for the source PDF is not explicitly stated in the document URL. Keep attribution to the original URL and treat extracted requirements as research-use derivative unless redistribution permission is clarified.",
+        "version": "repo-curated-atm-v1 (2026-05-04)",
+        "num_requirements_full": 30,
+        "num_requirements_baseline": 30,
+        "construction_notes": "Normalized to canonical [{title,text}] format using scripts/normalize_requirements_json.py-style procedure; title fields reassigned to Requirement 1..30; non-input annotation fields removed."
+      }
+    },
+    {
+      "id": "health",
+      "paper_name": "Healthcare requirements (cross-domain transfer)",
+      "role": "Primary B — same pipeline, different vocabulary and shapes",
+      "paths": {
+        "requirements_full": "data/requirements/health_requirements.jsonl",
+        "gold_reference": "data/domains/health/health_gold.ttl",
+        "shacl_shapes": "data/shapes/shapes_health.ttl",
+        "competency_questions": "data/queries/health_cqs.rq"
+      },
+      "journal_claims": [
+        "Cross-domain prompting without retraining",
+        "Transfer of repair / stability behaviour"
+      ],
+      "metadata_to_fill": {
+        "source": "PhysioNet MIMIC-IV v2.2 (https://physionet.org/content/mimiciv/2.2/) and MIMIC-IV-ED v2.2 (https://physionet.org/content/mimic-iv-ed/2.2/) used as real-world healthcare semantics anchors for visits, clinicians, prescriptions, labs, billing, and vital-sign workflows.",
+        "license": "Upstream data access/redistribution is governed by PhysioNet credentialed data terms (MIMIC access agreement and cited data-use requirements). The in-repo requirement corpus is a derived abstraction for research experiments.",
+        "version": "repo-curated-health-v1 (2026-05-04)",
+        "num_requirements": 30,
+        "construction_notes": "Derived from MIMIC clinical workflow concepts (encounters, orders, results, prescriptions, billing/events), then normalized to canonical [{title,text}] format and re-indexed as Requirement 1..30 for cross-domain comparability."
+      }
+    },
+    {
+      "id": "retail",
+      "paper_name": "Retail requirements (third domain robustness)",
+      "role": "Primary C — commerce workflow semantics (order, payment, inventory, shipment, return)",
+      "paths": {
+        "requirements_full": "data/requirements/retail_requirements.jsonl",
+        "gold_reference": "data/domains/retail/retail_gold.ttl",
+        "shacl_shapes": "data/shapes/shapes_retail.ttl",
+        "competency_questions": "data/queries/retail_cqs.rq"
+      },
+      "journal_claims": [
+        "Third-domain transfer validation",
+        "Workflow consistency across ordering and fulfillment"
+      ],
+      "metadata_to_fill": {
+        "source": "Online Retail dataset (UCI ML Repository dataset 352) used as real-world retail semantics anchor; requirements corpus authored as faithful abstraction of entities/relations (orders, products, customers, payments, inventory, shipment).",
+        "license": "UCI dataset 352 license: CC BY 4.0 (as declared on UCI page). Derived requirement statements in this repo are a curated abstraction for ontology tasks.",
+        "version": "repo-curated-retail-v1 (2026-05-04)",
+        "num_requirements": 30,
+        "construction_notes": "Requirement statements were constructed from UCI transactional schema concepts and normalized to [{title,text}] format. Gold ontology, SHACL shapes, and CQs are version-locked to this 30-line corpus."
+      }
+    }
+  ],
+  "auxiliary_bundle": {
+    "id": "shared_auxiliary",
+    "paper_name": "Auxiliary assets (exemplars, optional stress / third slice)",
+    "role": "Supports theory + controlled comparisons without doubling main corpus size",
+    "paths": {
+      "prompt_exemplars": "data/auxiliary/exemplars/",
+      "stress_or_edge_cases": "data/auxiliary/stress/",
+      "optional_third_domain_stub": "data/auxiliary/third_domain_seed/"
+    },
+    "suggested_contents": {
+      "exemplars": "Small frozen FR snippets used in few-shot / ontology-aware prompts (same IDs across seeds).",
+      "stress": "Short JSONL of adversarial or ambiguous NL lines for failure taxonomy (F1–F10) case studies.",
+      "third_domain_seed": "Optional minimal TTL + 5–15 reqs + shapes for a 'novel domain' paragraph OR leave empty."
+    }
+  }
+}

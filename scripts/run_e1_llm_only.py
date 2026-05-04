@@ -26,7 +26,16 @@ def load_config(path: Path) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the E1 LLM-only experiment")
-    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/atm_e1_llm_only.json")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/e1_llm_only_atm.json")
+    parser.add_argument("--output-root", type=Path, default=None, help="Override output root.")
+    parser.add_argument("--temperature", type=float, default=None, help="Override LLM temperature.")
+    parser.add_argument("--seed", type=int, default=None, help="Seed tag for reproducibility metadata.")
+    parser.add_argument(
+        "--prompt-mode",
+        choices=["raw", "ontology_aware"],
+        default=None,
+        help="Prompt mode override for baseline comparison runs.",
+    )
     return parser.parse_args()
 
 
@@ -94,7 +103,13 @@ def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
     output_root = PROJECT_ROOT / cfg.get("output_root", "runs/E1_llm_only")
+    if args.output_root is not None:
+        output_root = args.output_root
     ensure_dir(output_root)
+    prompt_mode = args.prompt_mode or cfg.get("prompt_mode", "raw")
+    use_ontology_context = cfg.get("use_ontology_context", False)
+    if prompt_mode == "ontology_aware":
+        use_ontology_context = True
 
     pipeline_config = PipelineConfig(
         requirements_path=PROJECT_ROOT / cfg["requirements_path"],
@@ -110,9 +125,10 @@ def main() -> None:
         reasoning_enabled=False,
         max_iterations=0,
         draft_only=True,
-        use_ontology_context=cfg.get("use_ontology_context", False),
+        use_ontology_context=use_ontology_context,
         grounding_ontology_path=PROJECT_ROOT / cfg["ontology_path"] if cfg.get("ontology_path") else None,
         base_namespace=cfg.get("base_namespace", "http://lod.csd.auth.gr/atm/atm.ttl#"),
+        llm_temperature=args.temperature if args.temperature is not None else cfg.get("temperature", 0.1),
     )
 
     pipeline = OntologyDraftingPipeline(pipeline_config)
@@ -120,7 +136,7 @@ def main() -> None:
     run_report_path = pipeline_config.report_path or output_root / "run_report.json"
 
     pred_graph = Graph().parse(pipeline_config.output_path)
-    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "gold/atm_gold.ttl")
+    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "data/domains/atm/atm_gold.ttl")
 
     (output_root / "metrics_exact.json").write_text(
         json.dumps(compute_exact_metrics(pipeline_config.output_path, gold_path), indent=2),
@@ -154,6 +170,12 @@ def main() -> None:
         pred_graph, pipeline_config.base_namespace
     )
     run_report["redundant_axioms_sample"] = collect_redundant_axioms(pred_graph)
+    run_report["experiment_metadata"] = {
+        "seed": args.seed,
+        "temperature": pipeline_config.llm_temperature,
+        "prompt_mode": prompt_mode,
+        "use_ontology_context": pipeline_config.use_ontology_context,
+    }
     if run_report_path:
         Path(run_report_path).write_text(json.dumps(run_report, indent=2), encoding="utf-8")
 

@@ -28,7 +28,7 @@ def load_config(path: Path) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the ATM ontology-aware example (E3)")
-    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/atm_ontology_aware.json")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/e3_ontology_aware_atm.json")
     return parser.parse_args()
 
 
@@ -81,7 +81,7 @@ def main() -> None:
         summary_path = output_root / "validation_summary.json"
         summary_path.write_text(json.dumps(summarize_shacl_report(shacl_report), indent=2), encoding="utf-8")
 
-    gold_path = PROJECT_ROOT / cfg.get("gold_path", "gold/atm_gold.ttl")
+    gold_path = PROJECT_ROOT / cfg.get("gold_path", "data/domains/atm/atm_gold.ttl")
     gold_graph = Graph().parse(gold_path)
     exact_metrics_path = output_root / "metrics_exact.json"
     semantic_metrics_path = output_root / "metrics_semantic.json"

@@ -1,0 +1,43 @@
+@prefix retail: <http://example.org/retail#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+retail:Customer a owl:Class .
+retail:Order a owl:Class .
+retail:OrderLine a owl:Class .
+retail:Product a owl:Class .
+retail:Category a owl:Class .
+retail:Payment a owl:Class .
+retail:Shipment a owl:Class .
+retail:Warehouse a owl:Class .
+retail:InventoryRecord a owl:Class .
+retail:Supplier a owl:Class .
+retail:ReturnRequest a owl:Class .
+retail:Refund a owl:Class .
+retail:FraudReview a owl:Class .
+
+retail:placedBy a owl:ObjectProperty ; rdfs:domain retail:Order ; rdfs:range retail:Customer .
+retail:hasOrderLine a owl:ObjectProperty ; rdfs:domain retail:Order ; rdfs:range retail:OrderLine .
+retail:lineProduct a owl:ObjectProperty ; rdfs:domain retail:OrderLine ; rdfs:range retail:Product .
+retail:belongsToCategory a owl:ObjectProperty ; rdfs:domain retail:Product ; rdfs:range retail:Category .
+retail:paidBy a owl:ObjectProperty ; rdfs:domain retail:Order ; rdfs:range retail:Payment .
+retail:shippedBy a owl:ObjectProperty ; rdfs:domain retail:Order ; rdfs:range retail:Shipment .
+retail:hasInventoryRecord a owl:ObjectProperty ; rdfs:domain retail:Warehouse ; rdfs:range retail:InventoryRecord .
+retail:inventoryProduct a owl:ObjectProperty ; rdfs:domain retail:InventoryRecord ; rdfs:range retail:Product .
+retail:suppliedBy a owl:ObjectProperty ; rdfs:domain retail:Product ; rdfs:range retail:Supplier .
+retail:returnsOrder a owl:ObjectProperty ; rdfs:domain retail:ReturnRequest ; rdfs:range retail:Order .
+retail:refundForPayment a owl:ObjectProperty ; rdfs:domain retail:Refund ; rdfs:range retail:Payment .
+retail:requiresReview a owl:ObjectProperty ; rdfs:domain retail:Order ; rdfs:range retail:FraudReview .
+
+retail:sku a owl:DatatypeProperty ; rdfs:domain retail:Product ; rdfs:range xsd:string .
+retail:productName a owl:DatatypeProperty ; rdfs:domain retail:Product ; rdfs:range xsd:string .
+retail:unitPrice a owl:DatatypeProperty ; rdfs:domain retail:Product ; rdfs:range xsd:decimal .
+retail:quantity a owl:DatatypeProperty ; rdfs:domain retail:OrderLine ; rdfs:range xsd:integer .
+retail:orderDate a owl:DatatypeProperty ; rdfs:domain retail:Order ; rdfs:range xsd:dateTime .
+retail:orderStatus a owl:DatatypeProperty ; rdfs:domain retail:Order ; rdfs:range xsd:string .
+retail:paymentAmount a owl:DatatypeProperty ; rdfs:domain retail:Payment ; rdfs:range xsd:decimal .
+retail:paymentMethod a owl:DatatypeProperty ; rdfs:domain retail:Payment ; rdfs:range xsd:string .
+retail:paymentTime a owl:DatatypeProperty ; rdfs:domain retail:Payment ; rdfs:range xsd:dateTime .
+retail:availableQty a owl:DatatypeProperty ; rdfs:domain retail:InventoryRecord ; rdfs:range xsd:integer .
+retail:customerEmail a owl:DatatypeProperty ; rdfs:domain retail:Customer ; rdfs:range xsd:string .

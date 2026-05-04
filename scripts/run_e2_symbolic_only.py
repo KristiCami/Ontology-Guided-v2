@@ -26,7 +26,7 @@ def load_config(path: Path) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the E2 symbolic-only experiment")
-    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/atm_e2_symbolic_only.json")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/e2_symbolic_atm.json")
     return parser.parse_args()
 
 
@@ -41,7 +41,7 @@ def main() -> None:
     ensure_dir(output_root)
 
     temperature = cfg.get("temperature", 0.1)
-    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "gold/atm_gold.ttl")
+    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "data/domains/atm/atm_gold.ttl")
     pipeline_config = PipelineConfig(
         requirements_path=PROJECT_ROOT / cfg["requirements_path"],
         shapes_path=PROJECT_ROOT / cfg["shapes_path"],

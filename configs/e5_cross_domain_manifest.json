@@ -1,0 +1,50 @@
+{
+  "domains": [
+    {
+      "name": "atm",
+      "output_root": "runs/E5_cross_domain/atm",
+      "requirements_path": "data/requirements/atm_requirements.jsonl",
+      "ontology_path": "data/domains/atm/atm_gold.ttl",
+      "shapes_path": "data/shapes/shapes_atm.ttl",
+      "competency_questions": "data/queries/atm_cqs.rq",
+      "use_ontology_context": true,
+      "prompt_mode": "ontology_aware",
+      "llm_mode": "openai",
+      "max_requirements": 50,
+      "iterations": 1,
+      "reasoning": true,
+      "base_namespace": "http://lod.csd.auth.gr/atm/atm.ttl#"
+    },
+    {
+      "name": "health",
+      "output_root": "runs/E5_cross_domain/health",
+      "requirements_path": "data/requirements/health_requirements.jsonl",
+      "ontology_path": "data/domains/health/health_gold.ttl",
+      "shapes_path": "data/shapes/shapes_health.ttl",
+      "competency_questions": "data/queries/health_cqs.rq",
+      "use_ontology_context": true,
+      "prompt_mode": "ontology_aware",
+      "llm_mode": "openai",
+      "max_requirements": 50,
+      "iterations": 1,
+      "reasoning": true,
+      "base_namespace": "http://example.org/health#"
+    },
+    {
+      "name": "retail",
+      "output_root": "runs/E5_cross_domain/retail",
+      "requirements_path": "data/requirements/retail_requirements.jsonl",
+      "ontology_path": "data/domains/retail/retail_gold.ttl",
+      "shapes_path": "data/shapes/shapes_retail.ttl",
+      "competency_questions": "data/queries/retail_cqs.rq",
+      "use_ontology_context": true,
+      "prompt_mode": "ontology_aware",
+      "llm_mode": "openai",
+      "max_requirements": 50,
+      "iterations": 1,
+      "reasoning": true,
+      "base_namespace": "http://example.org/retail#"
+    }
+  ],
+  "extra_domains": []
+}

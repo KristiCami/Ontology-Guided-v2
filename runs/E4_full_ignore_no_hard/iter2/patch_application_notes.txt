@@ -1,2 +1,0 @@
-llm_patch_parse_error
-fallback_heuristic_patch_applied

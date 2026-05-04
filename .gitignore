@@ -8,3 +8,22 @@
 *.pyc
 
 env
+
+# Generated experiment outputs (keep README)
+runs/**
+!runs/README.md
+
+# Ad-hoc pipeline build directory
+build/
+
+# LaTeX build artefacts
+paper/**/build/
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.fdb_latexmk
+paper/**/*.fls
+paper/**/*.log
+paper/**/*.out
+paper/**/*.synctex.gz
+paper/**/*.toc

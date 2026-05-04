@@ -7,14 +7,17 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from rdflib import Graph
+from rdflib.namespace import OWL, RDF
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from og_nsd import OntologyAssembler, load_schema_context  # noqa: E402
+from og_nsd.error_taxonomy import compute_iteration_taxonomy  # noqa: E402
 from og_nsd.llm import HeuristicLLM, OpenAILLM  # noqa: E402
 from og_nsd.reasoning import OwlreadyReasoner  # noqa: E402
 from og_nsd.repair import (  # noqa: E402
@@ -33,7 +36,7 @@ from og_nsd.queries import CompetencyQuestionRunner  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the E4 iterative repair experiment")
-    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/atm_e4_iterative.json")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/e4_iterative_repair_atm.json")
     parser.add_argument("--cq-threshold", type=float, default=0.8)
     parser.add_argument(
         "--stop-policies",
@@ -75,7 +78,70 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="Skip soft/warning SHACL results when generating patches.",
     )
+    parser.add_argument(
+        "--feedback-variant",
+        choices=["raw", "typed", "typed_priority"],
+        default=None,
+        help="Feedback channel for repair prompts (raw text or typed patches).",
+    )
+    parser.add_argument(
+        "--stability-variant",
+        choices=["none", "sa1", "sa2", "sa3", "sa4", "sa5"],
+        default=None,
+        help="Stability-aware control variant for repair stopping/filtering.",
+    )
+    parser.add_argument(
+        "--no-gain-patience",
+        type=int,
+        default=None,
+        help="Stop after this many iterations without CQ gain (SA-1).",
+    )
+    parser.add_argument(
+        "--max-growth-ratio",
+        type=float,
+        default=None,
+        help="Stop or cap when graph growth ratio exceeds threshold (SA-2).",
+    )
+    parser.add_argument(
+        "--max-patches-per-iter",
+        type=int,
+        default=None,
+        help="Repair budget: max patches applied per iteration.",
+    )
+    parser.add_argument(
+        "--max-new-triples-per-iter",
+        type=int,
+        default=None,
+        help="Repair budget: stop if per-iteration triple delta exceeds limit.",
+    )
+    parser.add_argument(
+        "--local-repair-only",
+        dest="local_repair_only",
+        action="store_true",
+        help="Restrict patches to local/base namespace resources.",
+    )
+    parser.add_argument(
+        "--allow-global-repair",
+        dest="local_repair_only",
+        action="store_false",
+        help="Allow broad/global repair patches.",
+    )
+    parser.add_argument(
+        "--ablation-profile",
+        choices=[
+            "none",
+            "no_shacl",
+            "no_reasoning",
+            "no_cq",
+            "no_ontology_context",
+            "no_exemplars",
+            "no_growth_control",
+        ],
+        default="none",
+        help="Apply predefined ablation overrides.",
+    )
     parser.set_defaults(use_soft_violations=None)
+    parser.set_defaults(local_repair_only=None)
     return parser.parse_args()
 
 
@@ -119,6 +185,83 @@ def _normalize_stop_policies(raw) -> list[str]:
     return [str(item).strip() for item in items if str(item).strip()]
 
 
+def _apply_ablation_profile(cfg: dict[str, Any], profile: str) -> dict[str, Any]:
+    updated = dict(cfg)
+    if profile == "none":
+        return updated
+    if profile == "no_shacl":
+        updated["validation"] = False
+    elif profile == "no_reasoning":
+        updated["reasoning"] = False
+    elif profile == "no_cq":
+        updated["competency_questions"] = None
+    elif profile == "no_ontology_context":
+        updated["use_ontology_context"] = False
+        updated["prompt_mode"] = "baseline"
+    elif profile == "no_exemplars":
+        updated["use_exemplars"] = False
+    elif profile == "no_growth_control":
+        updated["stability_variant"] = "none"
+    return updated
+
+
+def _is_local_term(value: str, base_ns: str) -> bool:
+    if value.startswith("http"):
+        return value.startswith(base_ns.rstrip("#/"))
+    return value.startswith("atm:")
+
+
+def _filter_and_rank_patches(
+    patches: list,
+    *,
+    feedback_variant: str,
+    local_repair_only: bool,
+    base_ns: str,
+    max_patches_per_iter: int,
+    hard_priority_only: bool,
+) -> list:
+    filtered = list(patches)
+    if local_repair_only:
+        filtered = [
+            patch
+            for patch in filtered
+            if _is_local_term(getattr(patch, "subject", "") or "", base_ns)
+            and _is_local_term(getattr(patch, "object", "") or "", base_ns)
+        ]
+    if hard_priority_only:
+        filtered = [
+            patch
+            for patch in filtered
+            if str(getattr(patch, "severity", "")).lower() in {"violation", "cq"}
+        ]
+    if feedback_variant == "typed_priority":
+        def _priority(patch) -> tuple[int, str]:
+            severity = str(getattr(patch, "severity", "")).lower()
+            if severity == "violation":
+                level = 0
+            elif severity == "cq":
+                level = 1
+            else:
+                level = 2
+            return (level, getattr(patch, "predicate", ""))
+
+        filtered = sorted(filtered, key=_priority)
+    if max_patches_per_iter > 0:
+        filtered = filtered[:max_patches_per_iter]
+    return filtered
+
+
+def _extract_vocab(graph: Graph) -> dict[str, set[str]]:
+    classes: set[str] = set()
+    properties: set[str] = set()
+    for subject, _, obj in graph.triples((None, RDF.type, None)):
+        if str(obj) == str(OWL.Class):
+            classes.add(str(subject))
+        elif str(obj) in {str(OWL.ObjectProperty), str(OWL.DatatypeProperty)}:
+            properties.add(str(subject))
+    return {"classes": classes, "properties": properties}
+
+
 def _save_iteration_log(
     iter_dir: Path,
     iteration: int,
@@ -130,6 +273,7 @@ def _save_iteration_log(
     reasoning_result,
     triples_before_reasoning: int,
     stop_decision: StopDecision,
+    diagnostics: dict[str, Any],
 ) -> dict:
     payload = {
         "iteration": iteration,
@@ -157,6 +301,7 @@ def _save_iteration_log(
         },
         "stop": {"decision": stop_decision.stop, "reason": stop_decision.reason},
         "stop_reason": stop_decision.reason,
+        "diagnostics": diagnostics,
     }
     (iter_dir / "iteration_log.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
@@ -164,7 +309,7 @@ def _save_iteration_log(
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
+    cfg = _apply_ablation_profile(load_config(args.config), args.ablation_profile)
     base_ns = cfg.get("base_namespace", "http://lod.csd.auth.gr/atm/atm.ttl#")
 
     cli_stop_policies = _normalize_stop_policies(args.stop_policies)
@@ -193,6 +338,17 @@ def main() -> None:
     use_soft_violations = cfg.get("use_soft_violations", True)
     if args.use_soft_violations is not None:
         use_soft_violations = args.use_soft_violations
+    feedback_variant = args.feedback_variant or cfg.get("feedback_variant", "typed")
+    stability_variant = args.stability_variant or cfg.get("stability_variant", "none")
+    no_gain_patience = args.no_gain_patience or cfg.get("no_gain_patience", 2)
+    max_growth_ratio = args.max_growth_ratio or cfg.get("max_growth_ratio", 1.8)
+    max_patches_per_iter = args.max_patches_per_iter or cfg.get("max_patches_per_iter", 20)
+    max_new_triples_per_iter = args.max_new_triples_per_iter or cfg.get("max_new_triples_per_iter", 400)
+    local_repair_only = cfg.get("local_repair_only", False)
+    if args.local_repair_only is not None:
+        local_repair_only = args.local_repair_only
+    if stability_variant in {"sa4", "sa5"}:
+        local_repair_only = True
 
     prompt_mode = cfg.get("prompt_mode", "ontology_aware")
     valid_modes = {"ontology_aware", "baseline"}
@@ -201,6 +357,9 @@ def main() -> None:
 
     requirement_loader = RequirementLoader(PROJECT_ROOT / cfg["requirements_path"])
     requirements = requirement_loader.load(cfg.get("max_requirements", 20))
+    use_exemplars = cfg.get("use_exemplars", True)
+    exemplar_count = cfg.get("exemplar_count", 4)
+    exemplar_pool = requirements[:exemplar_count] if use_exemplars else None
 
     ontology_context_path = None
     if cfg.get("use_ontology_context", True) and prompt_mode != "baseline":
@@ -238,7 +397,7 @@ def main() -> None:
 
         chunk_size = cfg.get("requirements_chunk_size", 5)
         for batch in chunk_requirements(requirements, size=chunk_size):
-            response = llm.generate_axioms(batch, schema_context=schema_context)
+            response = llm.generate_axioms(batch, schema_context=schema_context, exemplars=exemplar_pool)
             try:
                 assembler.add_turtle(state, response.turtle)
             except ValueError as exc:
@@ -261,6 +420,9 @@ def main() -> None:
                         "reasoning": cfg.get("reasoning", True),
                         "stop_policy": policy,
                         "use_soft_violations": use_soft_violations,
+                        "feedback_variant": feedback_variant,
+                        "stability_variant": stability_variant,
+                        "ablation_profile": args.ablation_profile,
                     },
                     "iterations": {},
                     "stop": {"iteration": 0, "reason": "draft_parse_error", "error": str(exc)},
@@ -285,6 +447,9 @@ def main() -> None:
                 "reasoning": cfg.get("reasoning", True),
                 "stop_policy": policy,
                 "use_soft_violations": use_soft_violations,
+                "feedback_variant": feedback_variant,
+                "stability_variant": stability_variant,
+                "ablation_profile": args.ablation_profile,
             },
             "iterations": {},
         }
@@ -292,6 +457,13 @@ def main() -> None:
         current_iter = 0
         cq_pass_rate = 0.0
         patch_iterations = 0
+        previous_cq_pass_rate: float | None = None
+        no_gain_streak = 0
+        prev_reasoned_triples: int | None = None
+        previous_asserted_triples: set[tuple[str, str, str]] | None = None
+        previous_vocab = {"classes": set(), "properties": set()}
+        diagnostics_rows: list[dict[str, Any]] = []
+        prev_hard_violations: int | None = None
 
         while True:
             triples_before_reasoning = len(state.graph)
@@ -337,6 +509,16 @@ def main() -> None:
             else:
                 patches = cq_patches
 
+            hard_priority_only = stability_variant in {"sa3", "sa5"}
+            patches = _filter_and_rank_patches(
+                patches,
+                feedback_variant=feedback_variant,
+                local_repair_only=bool(local_repair_only),
+                base_ns=base_ns,
+                max_patches_per_iter=max_patches_per_iter,
+                hard_priority_only=hard_priority_only,
+            )
+
             save_patch_plan(patches, iter_dir / "patches.json")
 
             cq_payload = {
@@ -350,6 +532,35 @@ def main() -> None:
 
             if patches:
                 patch_iterations += 1
+
+            if previous_cq_pass_rate is None:
+                no_gain_streak = 0
+            elif cq_pass_rate > previous_cq_pass_rate:
+                no_gain_streak = 0
+            else:
+                no_gain_streak += 1
+            cq_gain = 0.0 if previous_cq_pass_rate is None else (cq_pass_rate - previous_cq_pass_rate)
+            previous_cq_pass_rate = cq_pass_rate
+
+            reasoned_triples = len(reasoning_result.expanded_graph)
+            current_asserted_triples = {(str(s), str(p), str(o)) for s, p, o in state.graph}
+            if prev_reasoned_triples is None:
+                growth_ratio = 1.0
+                new_triples = 0
+            else:
+                growth_ratio = reasoned_triples / max(prev_reasoned_triples, 1)
+                new_triples = reasoned_triples - prev_reasoned_triples
+            prev_reasoned_triples = reasoned_triples
+            if previous_asserted_triples is None:
+                changed_triples = 0
+            else:
+                changed_triples = len(current_asserted_triples.symmetric_difference(previous_asserted_triples))
+            previous_asserted_triples = current_asserted_triples
+
+            vocab = _extract_vocab(state.graph)
+            new_classes = vocab["classes"] - previous_vocab["classes"]
+            new_properties = vocab["properties"] - previous_vocab["properties"]
+            previous_vocab = vocab
 
             if not cfg.get("validation", True):
                 stop_decision = StopDecision(True, "validation_disabled")
@@ -365,9 +576,109 @@ def main() -> None:
                     stop_policy=policy,
                 )
 
+            if stability_variant in {"sa1", "sa5"} and no_gain_streak >= no_gain_patience:
+                stop_decision = StopDecision(True, "stability_stop_no_cq_gain")
+            if stability_variant in {"sa2", "sa5"} and growth_ratio > max_growth_ratio:
+                stop_decision = StopDecision(True, "stability_stop_growth_ratio")
+            if max_new_triples_per_iter > 0 and new_triples > max_new_triples_per_iter:
+                stop_decision = StopDecision(True, "budget_stop_new_triples")
+
             if stop_decision.stop and stop_decision.reason != "max_iterations_reached":
                 if patches and patch_iterations < min_patch_iterations:
                     stop_decision = StopDecision(False, "min_patch_iterations_not_met")
+
+            constraint_components: list[str] = []
+            shacl_messages: list[str] = []
+            if shacl_report:
+                constraint_components = sorted(
+                    {
+                        str(result.constraint_component)
+                        for result in shacl_report.results
+                        if result.constraint_component
+                    }
+                )
+                shacl_messages = [
+                    str(result.message)
+                    for result in shacl_report.results
+                    if result.message
+                ]
+            local_patch_count = sum(
+                1
+                for patch in patches
+                if _is_local_term(getattr(patch, "subject", "") or "", base_ns)
+                and _is_local_term(getattr(patch, "object", "") or "", base_ns)
+            )
+            patch_locality = (local_patch_count / len(patches)) if patches else 0.0
+            diagnostics = {
+                "cq": {
+                    "passed": sum(1 for res in cq_results if res.success),
+                    "total": len(cq_results),
+                    "new_gains": max(cq_gain, 0.0),
+                    "lost_gains": abs(min(cq_gain, 0.0)),
+                    "no_gain_streak": no_gain_streak,
+                },
+                "shacl": {
+                    "hard": summary["violations"]["hard"],
+                    "soft": summary["violations"]["soft"],
+                    "violation_types": constraint_components,
+                },
+                "reasoning": {
+                    "success": reasoning_result.report.consistent is not False,
+                    "consistent": reasoning_result.report.consistent,
+                    "unsat": len(reasoning_result.report.unsatisfiable_classes),
+                    "exceptions": bool(
+                        any(
+                            token in (reasoning_result.report.notes or "").lower()
+                            for token in ("failed", "exception", "nullpointer", "error")
+                        )
+                    ),
+                    "notes": reasoning_result.report.notes,
+                },
+                "graph": {
+                    "asserted_triples": triples_before_reasoning,
+                    "reasoned_triples": reasoned_triples,
+                    "new_triples": new_triples,
+                    "changed_triples": changed_triples,
+                    "growth_ratio": growth_ratio,
+                },
+                "patch": {
+                    "count": len(patches),
+                    "changed_triples": changed_triples,
+                    "locality_ratio": patch_locality,
+                },
+                "vocabulary": {
+                    "new_classes_count": len(new_classes),
+                    "new_properties_count": len(new_properties),
+                    "new_classes_sample": sorted(list(new_classes))[:20],
+                    "new_properties_sample": sorted(list(new_properties))[:20],
+                },
+                "stability": {
+                    "explosion_flag": growth_ratio > max_growth_ratio,
+                    "oscillation_flag": cq_gain < 0,
+                },
+            }
+            diagnostics["error_taxonomy"] = compute_iteration_taxonomy(
+                schema_context=schema_context,
+                base_ns=base_ns,
+                new_classes=set(new_classes),
+                new_properties=set(new_properties),
+                growth_ratio=growth_ratio,
+                max_growth_ratio=max_growth_ratio,
+                reasoner_consistent=reasoning_result.report.consistent,
+                reasoner_notes=reasoning_result.report.notes or "",
+                no_gain_streak=no_gain_streak,
+                no_gain_patience=no_gain_patience,
+                patches_unchanged=(stop_decision.reason == "patches_unchanged"),
+                hard_violations=int(summary["violations"]["hard"]),
+                prev_hard_violations=prev_hard_violations,
+                cq_gain=cq_gain,
+                new_triples=new_triples,
+                shacl_constraint_components=constraint_components,
+                shacl_messages=shacl_messages,
+                shacl_violation_total=int(summary["violations"]["hard"] + summary["violations"]["soft"]),
+                patch_parse_error=False,
+            )
+            prev_hard_violations = int(summary["violations"]["hard"])
 
             iteration_log = _save_iteration_log(
                 iter_dir=iter_dir,
@@ -380,8 +691,27 @@ def main() -> None:
                 reasoning_result=reasoning_result,
                 triples_before_reasoning=triples_before_reasoning,
                 stop_decision=stop_decision,
+                diagnostics=diagnostics,
             )
             repair_log["iterations"][f"iter{current_iter}"] = iteration_log
+            diagnostics_rows.append(
+                {
+                    "iteration": current_iter,
+                    "cq_pass_rate": cq_pass_rate,
+                    "growth_ratio": growth_ratio,
+                    "new_triples": new_triples,
+                    "changed_triples": changed_triples,
+                    "hard_violations": summary["violations"]["hard"],
+                    "soft_violations": summary["violations"]["soft"],
+                    "patch_count": len(patches),
+                    "patch_locality_ratio": patch_locality,
+                    "new_classes_count": len(new_classes),
+                    "new_properties_count": len(new_properties),
+                    "no_gain_streak": no_gain_streak,
+                    "stop_reason": stop_decision.reason,
+                    "error_taxonomy": diagnostics["error_taxonomy"],
+                }
+            )
 
             if stop_decision.stop:
                 break
@@ -392,7 +722,11 @@ def main() -> None:
             ensure_dir(next_dir)
 
             context_ttl = state.graph.serialize(format="turtle")
-            patch_response = llm.apply_patches([p.to_dict() for p in patches], context_ttl)
+            if feedback_variant == "raw":
+                prompt_lines = [p.message or f"{p.subject} {p.predicate} {p.object}" for p in patches]
+                patch_response = llm.generate_patch(prompt_lines, context_ttl)
+            else:
+                patch_response = llm.apply_patches([p.to_dict() for p in patches], context_ttl)
 
             next_state = assembler.bootstrap()
             assembler.add_turtle(next_state, context_ttl)
@@ -446,6 +780,30 @@ def main() -> None:
                         reasoning_result=stub_reasoning,
                         triples_before_reasoning=len(state.graph),
                         stop_decision=stop_decision,
+                        diagnostics={
+                            "graph": {"asserted_triples": len(state.graph), "reasoned_triples": len(state.graph)},
+                            "error_taxonomy": compute_iteration_taxonomy(
+                                schema_context=schema_context,
+                                base_ns=base_ns,
+                                new_classes=set(),
+                                new_properties=set(),
+                                growth_ratio=1.0,
+                                max_growth_ratio=max_growth_ratio,
+                                reasoner_consistent=False,
+                                reasoner_notes="patch_parse_error",
+                                no_gain_streak=0,
+                                no_gain_patience=no_gain_patience,
+                                patches_unchanged=False,
+                                hard_violations=0,
+                                prev_hard_violations=None,
+                                cq_gain=0.0,
+                                new_triples=0,
+                                shacl_constraint_components=[],
+                                shacl_messages=[],
+                                shacl_violation_total=0,
+                                patch_parse_error=True,
+                            ),
+                        },
                     )
                     repair_log["iterations"][f"iter{next_iter}"] = iteration_log
                     repair_log["stop"] = {
@@ -496,6 +854,18 @@ def main() -> None:
             (final_dir / "cq_results.json").write_text(json.dumps(cq_payload, indent=2), encoding="utf-8")
 
         (output_root / "repair_log.json").write_text(json.dumps(repair_log, indent=2), encoding="utf-8")
+        (output_root / "diagnostics_summary.json").write_text(
+            json.dumps(
+                {
+                    "feedback_variant": feedback_variant,
+                    "stability_variant": stability_variant,
+                    "ablation_profile": args.ablation_profile,
+                    "rows": diagnostics_rows,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         print(f"[{policy}] E4 run complete. Outputs written to {output_root}")
 

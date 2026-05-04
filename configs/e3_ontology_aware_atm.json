@@ -1,0 +1,16 @@
+{
+  "requirements_path": "data/requirements/atm_requirements.jsonl",
+  "shapes_path": "data/shapes/shapes_atm.ttl",
+  "use_ontology_context": true,
+  "ontology_context_path": "data/domains/atm/atm_gold.ttl",
+  "ontology_path": "data/domains/atm/atm_gold.ttl",
+  "gold_path": "data/domains/atm/atm_gold.ttl",
+  "prompt_mode": "ontology_aware",
+  "validation": false,
+  "llm_mode": "openai",
+  "max_requirements": 50,
+  "output_root": "runs/E3_no_repair",
+  "iterations": 15,
+  "reasoning": true,
+  "competency_questions": "data/queries/atm_cqs.rq"
+}

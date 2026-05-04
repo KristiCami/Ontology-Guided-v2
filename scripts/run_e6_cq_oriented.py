@@ -25,7 +25,7 @@ def load_config(path: Path) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the E6 CQ-oriented experiment")
-    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/atm_e6_cq_oriented.json")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "configs/e6_cq_oriented_atm.json")
     return parser.parse_args()
 
 
@@ -76,7 +76,7 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "gold/atm_gold.ttl")
+    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "data/domains/atm/atm_gold.ttl")
     (output_root / "metrics_exact.json").write_text(
         json.dumps(compute_exact_metrics(pipeline_config.output_path, gold_path), indent=2),
         encoding="utf-8",

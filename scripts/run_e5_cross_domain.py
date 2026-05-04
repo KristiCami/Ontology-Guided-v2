@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the E5 cross-domain experiment across multiple config files."""
+"""Run the E5 cross-domain experiment across multiple domain blocks."""
 from __future__ import annotations
 
 import argparse
@@ -17,14 +17,16 @@ from og_nsd import OntologyDraftingPipeline, PipelineConfig  # noqa: E402
 from og_nsd.metrics import compute_exact_metrics, compute_semantic_metrics  # noqa: E402
 from og_nsd.shacl import summarize_shacl_report  # noqa: E402
 
+_DOMAIN_META_KEYS = frozenset({"name", "output_root", "config"})
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the E5 cross-domain experiment")
     parser.add_argument(
         "--config",
         type=Path,
-        default=PROJECT_ROOT / "configs/e5_cross_domain.json",
-        help="Path to a JSON file listing domain configs",
+        default=PROJECT_ROOT / "configs/e5_cross_domain_manifest.json",
+        help="Path to JSON with a 'domains' list (inline blocks and/or config paths)",
     )
     parser.add_argument(
         "--llm-mode",
@@ -45,8 +47,22 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def run_domain(name: str, cfg_path: Path, output_root: Path | None, llm_mode_override: str | None) -> None:
-    cfg = load_config(cfg_path)
+def resolve_domain_entry(domain: dict) -> tuple[str, Path | None, dict]:
+    """Return (name, output_root, cfg_dict). Each domain is either a path reference or an inline experiment block."""
+
+    output_root = PROJECT_ROOT / domain["output_root"] if domain.get("output_root") else None
+    cfg_rel = domain.get("config")
+    if cfg_rel:
+        cfg_path = PROJECT_ROOT / cfg_rel
+        cfg = load_config(cfg_path)
+        name = domain.get("name") or cfg_path.stem
+        return name, output_root, cfg
+    cfg = {k: v for k, v in domain.items() if k not in _DOMAIN_META_KEYS}
+    name = domain.get("name") or "domain"
+    return name, output_root, cfg
+
+
+def run_domain(name: str, cfg: dict, output_root: Path | None, llm_mode_override: str | None) -> None:
     resolved_output_root = output_root or (PROJECT_ROOT / cfg.get("output_root", f"runs/E5_cross_domain/{name}"))
     ensure_dir(resolved_output_root)
 
@@ -80,7 +96,7 @@ def run_domain(name: str, cfg_path: Path, output_root: Path | None, llm_mode_ove
             encoding="utf-8",
         )
 
-    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "gold/atm_gold.ttl")
+    gold_path = PROJECT_ROOT / cfg.get("ontology_path", "data/domains/atm/atm_gold.ttl")
     (resolved_output_root / "metrics_exact.json").write_text(
         json.dumps(compute_exact_metrics(pipeline_config.output_path, gold_path), indent=2),
         encoding="utf-8",
@@ -93,18 +109,22 @@ def run_domain(name: str, cfg_path: Path, output_root: Path | None, llm_mode_ove
     print(f"E5 run complete for {name}. Outputs written under {resolved_output_root}")
 
 
-def main() -> None:
-    args = parse_args()
-    cfg = load_config(args.config)
-    domains = cfg.get("domains", [])
-    if not domains:
-        raise SystemExit("No domains configured. Provide entries in configs/e5_cross_domain.json")
+def run_domain_entries(domains: list[dict], llm_mode_override: str | None) -> None:
+    """Run a list of domain entries (used for manifest ``domains`` or ``extra_domains``)."""
 
     for domain in domains:
-        name = domain.get("name") or Path(domain["config"]).stem
-        cfg_path = PROJECT_ROOT / domain["config"]
-        output_root = PROJECT_ROOT / domain["output_root"] if domain.get("output_root") else None
-        run_domain(name, cfg_path, output_root, args.llm_mode)
+        name, output_root, cfg = resolve_domain_entry(domain)
+        run_domain(name, cfg, output_root, llm_mode_override)
+
+
+def main() -> None:
+    args = parse_args()
+    payload = load_config(args.config)
+    domains = payload.get("domains", [])
+    if not domains:
+        raise SystemExit("No 'domains' entries in configs/e5_cross_domain_manifest.json")
+
+    run_domain_entries(domains, args.llm_mode)
 
 
 if __name__ == "__main__":

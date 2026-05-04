@@ -1,0 +1,10 @@
+{
+  "requirements_path": "data/requirements/atm_requirements.jsonl",
+  "ontology_path": "data/domains/atm/atm_gold.ttl",
+  "llm_mode": "openai",
+  "max_requirements": 50,
+  "output_root": "runs/E1_llm_only",
+  "use_ontology_context": true,
+  "competency_questions": "data/queries/atm_cqs.rq",
+  "base_namespace": "http://lod.csd.auth.gr/atm/atm.ttl#"
+}
