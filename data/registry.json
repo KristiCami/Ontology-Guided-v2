@@ -1,5 +1,5 @@
 {
-  "paper_data_story": "three_primary_one_auxiliary",
+  "paper_data_story": "three_primary",
   "primary_datasets": [
     {
       "id": "atm",
@@ -73,20 +73,5 @@
         "construction_notes": "Requirement statements were constructed from UCI transactional schema concepts and normalized to [{title,text}] format. Gold ontology, SHACL shapes, and CQs are version-locked to this 30-line corpus."
       }
     }
-  ],
-  "auxiliary_bundle": {
-    "id": "shared_auxiliary",
-    "paper_name": "Auxiliary assets (exemplars, optional stress / third slice)",
-    "role": "Supports theory + controlled comparisons without doubling main corpus size",
-    "paths": {
-      "prompt_exemplars": "data/auxiliary/exemplars/",
-      "stress_or_edge_cases": "data/auxiliary/stress/",
-      "optional_third_domain_stub": "data/auxiliary/third_domain_seed/"
-    },
-    "suggested_contents": {
-      "exemplars": "Small frozen FR snippets used in few-shot / ontology-aware prompts (same IDs across seeds).",
-      "stress": "Short JSONL of adversarial or ambiguous NL lines for failure taxonomy (F1–F10) case studies.",
-      "third_domain_seed": "Optional minimal TTL + 5–15 reqs + shapes for a 'novel domain' paragraph OR leave empty."
-    }
-  }
+  ]
 }
