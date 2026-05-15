@@ -129,6 +129,7 @@ def main() -> None:
         grounding_ontology_path=PROJECT_ROOT / cfg["ontology_path"] if cfg.get("ontology_path") else None,
         base_namespace=cfg.get("base_namespace", "http://lod.csd.auth.gr/atm/atm.ttl#"),
         llm_temperature=args.temperature if args.temperature is not None else cfg.get("temperature", 0.1),
+        llm_seed=args.seed,
     )
 
     pipeline = OntologyDraftingPipeline(pipeline_config)

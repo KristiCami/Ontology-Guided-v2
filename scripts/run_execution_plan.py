@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import platform
 import shutil
 import subprocess
 import sys
@@ -13,6 +15,13 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+_DATA_HASH_DIRS = (
+    "data/requirements",
+    "data/domains",
+    "data/shapes",
+    "data/queries",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,15 +53,146 @@ def _copy_tree(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst)
 
 
+def _git_state() -> dict:
+    """Capture git HEAD, working-tree status, and unified diff for reproducibility."""
+
+    def _run(cmd: list[str]) -> str:
+        try:
+            return subprocess.run(
+                cmd,
+                cwd=PROJECT_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except Exception as exc:  # pragma: no cover - defensive
+            return f"<failed: {exc}>"
+
+    return {
+        "head_commit": _run(["git", "rev-parse", "HEAD"]),
+        "branch": _run(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+        "status_porcelain": _run(["git", "status", "--porcelain"]),
+        "remote_url": _run(["git", "config", "--get", "remote.origin.url"]),
+    }
+
+
+def _capture_pip_freeze(target: Path) -> str:
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "freeze"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        text = proc.stdout
+    except Exception as exc:  # pragma: no cover - defensive
+        text = f"<pip freeze failed: {exc}>\n"
+    target.write_text(text, encoding="utf-8")
+    return text
+
+
+def _sha256_file(path: Path, chunk_size: int = 65536) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _compute_data_hashes() -> dict[str, str]:
+    """SHA256 every regular file under known data directories.
+
+    Keys are POSIX-style paths relative to ``PROJECT_ROOT`` so the manifest
+    stays portable across operating systems.
+    """
+
+    hashes: dict[str, str] = {}
+    for rel in _DATA_HASH_DIRS:
+        root = PROJECT_ROOT / rel
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            key = path.relative_to(PROJECT_ROOT).as_posix()
+            hashes[key] = _sha256_file(path)
+    return hashes
+
+
+def _env_info() -> dict:
+    return {
+        "python_version": sys.version,
+        "python_implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+    }
+
+
 def step_1_freeze_configs(execute: bool) -> dict:
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     repro_root = PROJECT_ROOT / "runs/reproducibility" / f"freeze_{stamp}"
     print(f"[Step 1] Freeze configs/runs -> {repro_root}")
-    if execute:
-        repro_root.mkdir(parents=True, exist_ok=True)
-        _copy_tree(PROJECT_ROOT / "configs", repro_root / "configs")
-        _copy_tree(PROJECT_ROOT / "runs", repro_root / "runs_snapshot")
-    return {"step": 1, "reproducibility_folder": str(repro_root)}
+    if not execute:
+        return {"step": 1, "reproducibility_folder": str(repro_root)}
+
+    repro_root.mkdir(parents=True, exist_ok=True)
+    _copy_tree(PROJECT_ROOT / "configs", repro_root / "configs")
+    _copy_tree(PROJECT_ROOT / "runs", repro_root / "runs_snapshot")
+
+    git_state = _git_state()
+    (repro_root / "git_state.json").write_text(json.dumps(git_state, indent=2), encoding="utf-8")
+    try:
+        diff_proc = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        (repro_root / "working_tree.diff").write_text(diff_proc.stdout or "", encoding="utf-8")
+    except Exception:  # pragma: no cover - defensive
+        (repro_root / "working_tree.diff").write_text("<git diff failed>", encoding="utf-8")
+
+    _capture_pip_freeze(repro_root / "requirements.lock.txt")
+
+    data_hashes = _compute_data_hashes()
+    (repro_root / "data_hashes.json").write_text(json.dumps(data_hashes, indent=2), encoding="utf-8")
+
+    env = _env_info()
+    (repro_root / "env.json").write_text(json.dumps(env, indent=2), encoding="utf-8")
+
+    manifest = {
+        "stamp_utc": stamp,
+        "project_root": str(PROJECT_ROOT),
+        "git": git_state,
+        "env": env,
+        "data_hash_count": len(data_hashes),
+        "data_hash_dirs": list(_DATA_HASH_DIRS),
+        "artifacts": [
+            "configs/",
+            "runs_snapshot/",
+            "git_state.json",
+            "working_tree.diff",
+            "requirements.lock.txt",
+            "data_hashes.json",
+            "env.json",
+        ],
+    }
+    (repro_root / "reproducibility_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return {
+        "step": 1,
+        "reproducibility_folder": str(repro_root),
+        "git_head": git_state.get("head_commit"),
+        "data_files_hashed": len(data_hashes),
+    }
 
 
 def step_2_baselines(execute: bool) -> dict:

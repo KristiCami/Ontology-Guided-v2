@@ -31,6 +31,7 @@ class PipelineConfig:
     grounding_ontology_path: Optional[Path] = None
     dev_split_path: Optional[Path] = None
     test_split_path: Optional[Path] = None
+    llm_seed: Optional[int] = None
 
     def ensure_output_dirs(self) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)

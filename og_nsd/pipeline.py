@@ -44,7 +44,7 @@ class OntologyDraftingPipeline:
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key:
                 try:
-                    return OpenAILLM(temperature=config.llm_temperature)
+                    return OpenAILLM(temperature=config.llm_temperature, seed=config.llm_seed)
                 except RuntimeError:
                     logging.warning(
                         "openai package missing; falling back to heuristic LLM for offline execution"

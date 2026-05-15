@@ -140,6 +140,12 @@ def parse_args() -> argparse.Namespace:
         default="none",
         help="Apply predefined ablation overrides.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed tag for reproducibility metadata; forwarded to OpenAI 'seed' when supported.",
+    )
     parser.set_defaults(use_soft_violations=None)
     parser.set_defaults(local_repair_only=None)
     return parser.parse_args()
@@ -150,12 +156,12 @@ def load_config(path: Path) -> dict:
         return json.load(handle)
 
 
-def select_llm(cfg: dict, base_namespace: str):
+def select_llm(cfg: dict, base_namespace: str, seed: int | None = None):
     mode = cfg.get("llm_mode", "heuristic")
     temperature = cfg.get("temperature", 0.2)
     if mode == "openai":
         try:
-            return OpenAILLM(temperature=temperature)
+            return OpenAILLM(temperature=temperature, seed=seed)
         except RuntimeError:
             return HeuristicLLM(base_namespace)
     return HeuristicLLM(base_namespace)
@@ -173,6 +179,21 @@ def _count_patch_types(patches):
             continue
         counts[action] = counts.get(action, 0) + 1
     return counts
+
+
+def _accumulate_token_usage(target: dict[str, int], src: dict[str, int] | None) -> None:
+    """Sum integer fields of ``src`` into ``target`` in place.
+
+    Mirrors the schema produced by ``og_nsd.llm._extract_token_usage`` so that
+    ``run_report.json`` stays compatible with the E1 baseline reader in
+    ``scripts/build_journal_tables.py``.
+    """
+
+    if not src:
+        return
+    for key, value in src.items():
+        if isinstance(value, int):
+            target[key] = target.get(key, 0) + value
 
 
 def _normalize_stop_policies(raw) -> list[str]:
@@ -388,22 +409,48 @@ def main() -> None:
     if cfg.get("competency_questions"):
         cq_runner = CompetencyQuestionRunner(PROJECT_ROOT / cfg["competency_questions"])
 
-    llm = select_llm(cfg, base_ns)
+    llm = select_llm(cfg, base_ns, seed=args.seed)
 
     def run_single(policy: str, output_root: Path) -> None:
         state = assembler.bootstrap()
         iter_dir = output_root / "iter0"
         ensure_dir(iter_dir)
 
+        total_token_usage: dict[str, int] = {}
+        pending_iter_tokens: dict[str, int] = {}
+        draft_token_usage: dict[str, int] = {}
+
         chunk_size = cfg.get("requirements_chunk_size", 5)
         for batch in chunk_requirements(requirements, size=chunk_size):
             response = llm.generate_axioms(batch, schema_context=schema_context, exemplars=exemplar_pool)
+            _accumulate_token_usage(total_token_usage, response.token_usage)
+            _accumulate_token_usage(pending_iter_tokens, response.token_usage)
+            _accumulate_token_usage(draft_token_usage, response.token_usage)
             try:
                 assembler.add_turtle(state, response.turtle)
             except ValueError as exc:
                 (iter_dir / "llm_error.txt").write_text(
                     "Draft generation failed to parse LLM Turtle.\n"
                     f"Reason: {exc}\n\nRaw turtle:\n{response.turtle}",
+                    encoding="utf-8",
+                )
+                (output_root / "run_report.json").write_text(
+                    json.dumps(
+                        {
+                            "token_usage": total_token_usage or None,
+                            "draft_token_usage": draft_token_usage or None,
+                            "experiment_metadata": {
+                                "seed": args.seed,
+                                "stop_policy": policy,
+                                "stability_variant": stability_variant,
+                                "feedback_variant": feedback_variant,
+                                "ablation_profile": args.ablation_profile,
+                            },
+                            "stop_reason": "draft_parse_error",
+                            "iterations_executed": 0,
+                        },
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
                 repair_log: dict = {
@@ -656,7 +703,12 @@ def main() -> None:
                     "explosion_flag": growth_ratio > max_growth_ratio,
                     "oscillation_flag": cq_gain < 0,
                 },
+                "efficiency": {
+                    "iteration_tokens": dict(pending_iter_tokens),
+                    "cumulative_tokens": dict(total_token_usage),
+                },
             }
+            pending_iter_tokens = {}
             diagnostics["error_taxonomy"] = compute_iteration_taxonomy(
                 schema_context=schema_context,
                 base_ns=base_ns,
@@ -710,6 +762,8 @@ def main() -> None:
                     "no_gain_streak": no_gain_streak,
                     "stop_reason": stop_decision.reason,
                     "error_taxonomy": diagnostics["error_taxonomy"],
+                    "iteration_tokens": diagnostics["efficiency"]["iteration_tokens"],
+                    "cumulative_tokens": diagnostics["efficiency"]["cumulative_tokens"],
                 }
             )
 
@@ -727,6 +781,8 @@ def main() -> None:
                 patch_response = llm.generate_patch(prompt_lines, context_ttl)
             else:
                 patch_response = llm.apply_patches([p.to_dict() for p in patches], context_ttl)
+            _accumulate_token_usage(total_token_usage, patch_response.token_usage)
+            _accumulate_token_usage(pending_iter_tokens, patch_response.token_usage)
 
             next_state = assembler.bootstrap()
             assembler.add_turtle(next_state, context_ttl)
@@ -742,6 +798,8 @@ def main() -> None:
                 try:
                     fallback_llm = HeuristicLLM(base_ns)
                     fallback_response = fallback_llm.apply_patches([p.to_dict() for p in patches], context_ttl)
+                    _accumulate_token_usage(total_token_usage, fallback_response.token_usage)
+                    _accumulate_token_usage(pending_iter_tokens, fallback_response.token_usage)
                     assembler.add_turtle(next_state, fallback_response.turtle)
                     fallback_notes.append("fallback_heuristic_patch_applied")
                     (next_dir / "fallback_patch.ttl").write_text(fallback_response.turtle, encoding="utf-8")
@@ -782,6 +840,10 @@ def main() -> None:
                         stop_decision=stop_decision,
                         diagnostics={
                             "graph": {"asserted_triples": len(state.graph), "reasoned_triples": len(state.graph)},
+                            "efficiency": {
+                                "iteration_tokens": dict(pending_iter_tokens),
+                                "cumulative_tokens": dict(total_token_usage),
+                            },
                             "error_taxonomy": compute_iteration_taxonomy(
                                 schema_context=schema_context,
                                 base_ns=base_ns,
@@ -813,6 +875,25 @@ def main() -> None:
                     }
                     repair_log["stop_reason"] = stop_decision.reason
                     (output_root / "repair_log.json").write_text(json.dumps(repair_log, indent=2), encoding="utf-8")
+                    (output_root / "run_report.json").write_text(
+                        json.dumps(
+                            {
+                                "token_usage": total_token_usage or None,
+                                "draft_token_usage": draft_token_usage or None,
+                                "experiment_metadata": {
+                                    "seed": args.seed,
+                                    "stop_policy": policy,
+                                    "stability_variant": stability_variant,
+                                    "feedback_variant": feedback_variant,
+                                    "ablation_profile": args.ablation_profile,
+                                },
+                                "stop_reason": stop_decision.reason,
+                                "iterations_executed": next_iter,
+                            },
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
                     print(
                         f"[{policy}] Aborted at iter{next_iter} due to Turtle parse error. "
                         f"See {(next_dir / 'llm_error.txt')}"
@@ -860,12 +941,39 @@ def main() -> None:
                     "feedback_variant": feedback_variant,
                     "stability_variant": stability_variant,
                     "ablation_profile": args.ablation_profile,
+                    "total_token_usage": total_token_usage,
+                    "draft_token_usage": draft_token_usage,
                     "rows": diagnostics_rows,
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
+
+        run_report = {
+            "token_usage": total_token_usage or None,
+            "draft_token_usage": draft_token_usage or None,
+            "experiment_metadata": {
+                "seed": args.seed,
+                "temperature": cfg.get("temperature"),
+                "stop_policy": policy,
+                "stability_variant": stability_variant,
+                "feedback_variant": feedback_variant,
+                "ablation_profile": args.ablation_profile,
+                "use_ontology_context": bool(ontology_context_path),
+                "prompt_mode": prompt_mode,
+                "max_iterations": iterations_cfg,
+                "min_patch_iterations": min_patch_iterations,
+                "no_gain_patience": no_gain_patience,
+                "max_growth_ratio": max_growth_ratio,
+                "max_patches_per_iter": max_patches_per_iter,
+                "max_new_triples_per_iter": max_new_triples_per_iter,
+                "local_repair_only": bool(local_repair_only),
+            },
+            "stop_reason": repair_log.get("stop_reason"),
+            "iterations_executed": current_iter,
+        }
+        (output_root / "run_report.json").write_text(json.dumps(run_report, indent=2), encoding="utf-8")
 
         print(f"[{policy}] E4 run complete. Outputs written to {output_root}")
 

@@ -237,12 +237,25 @@ class HeuristicLLM(LLMClient):
 class OpenAILLM(LLMClient):
     """Adapter for the OpenAI Chat Completions API."""
 
-    def __init__(self, model: str = "gpt-5.2", temperature: float = 0.1, system_prompt: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str = "gpt-5.2",
+        temperature: float = 0.1,
+        system_prompt: str | None = None,
+        seed: int | None = None,
+    ) -> None:
         if OpenAI is None:
             raise RuntimeError("openai package is not installed")
         self.model = model
         self.temperature = temperature
         self.system_prompt = system_prompt or self._default_system_prompt()
+        self.seed = seed
+
+    def _completion_kwargs(self) -> dict:
+        kwargs: dict = {"model": self.model, "temperature": self.temperature}
+        if self.seed is not None:
+            kwargs["seed"] = int(self.seed)
+        return kwargs
 
     def generate_axioms(
         self,
@@ -262,9 +275,8 @@ class OpenAILLM(LLMClient):
             raise RuntimeError("OPENAI_API_KEY is not set")
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model=self.model,
             messages=messages,
-            temperature=self.temperature,
+            **self._completion_kwargs(),
         )
         content = response.choices[0].message.content.strip() if response.choices else ""
         token_usage = _extract_token_usage(response)
@@ -286,9 +298,8 @@ class OpenAILLM(LLMClient):
             raise RuntimeError("OPENAI_API_KEY is not set")
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model=self.model,
             messages=messages,
-            temperature=self.temperature,
+            **self._completion_kwargs(),
         )
         content = response.choices[0].message.content.strip() if response.choices else ""
         token_usage = _extract_token_usage(response)
@@ -309,9 +320,8 @@ class OpenAILLM(LLMClient):
             raise RuntimeError("OPENAI_API_KEY is not set")
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model=self.model,
             messages=messages,
-            temperature=self.temperature,
+            **self._completion_kwargs(),
         )
         content = response.choices[0].message.content.strip() if response.choices else ""
         token_usage = _extract_token_usage(response)

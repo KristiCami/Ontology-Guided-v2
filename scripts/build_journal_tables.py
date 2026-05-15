@@ -7,6 +7,8 @@ import argparse
 import csv
 import json
 import math
+import re
+from collections import defaultdict
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -69,10 +71,23 @@ def _error_taxonomy_counts(run_root: Path) -> dict[str, int]:
     return counts
 
 
+_SEED_SUFFIX_PATTERN = re.compile(r"-S(\d+)$")
+
+
+def _parse_seed_id(exp_id: str) -> tuple[str, str | None]:
+    """Split ``<base>-S<seed>`` into ``(base, seed)``; returns seed=None when absent."""
+
+    match = _SEED_SUFFIX_PATTERN.search(exp_id)
+    if not match:
+        return exp_id, None
+    base = exp_id[: match.start()]
+    return base, match.group(1)
+
+
 def _resolve_run_root(exp_id: str) -> Path:
-    if exp_id.startswith("E-DIAG-4-S"):
-        seed = exp_id.split("S", 1)[1]
-        return PROJECT_ROOT / "runs/journal/E-DIAG-4" / f"seed_{seed}"
+    base, seed = _parse_seed_id(exp_id)
+    if seed is not None:
+        return PROJECT_ROOT / "runs/journal" / base / f"seed_{seed}"
     return PROJECT_ROOT / "runs/journal" / exp_id
 
 
@@ -99,6 +114,8 @@ def _token_total(run_root: Path) -> int | None:
 
 
 def _seed_stats(seed_rows: list[dict]) -> dict:
+    """Aggregate F1 across one base experiment's seed runs (legacy E-DIAG-4 path)."""
+
     values = []
     for row in seed_rows:
         value = row.get("f1_semantic")
@@ -116,6 +133,51 @@ def _seed_stats(seed_rows: list[dict]) -> dict:
     return {"count": len(values), "mean_f1": mean, "std_f1": math.sqrt(variance)}
 
 
+def _aggregate_per_base(rows_by_base: dict[str, list[dict]]) -> list[dict]:
+    """Mean/std of f1_semantic and cq_pass_rate per base experiment id."""
+
+    summaries: list[dict] = []
+    for base_id in sorted(rows_by_base.keys()):
+        rows = rows_by_base[base_id]
+        f1_values: list[float] = []
+        cq_values: list[float] = []
+        token_values: list[float] = []
+        for row in rows:
+            f1 = row.get("f1_semantic")
+            if isinstance(f1, (int, float)):
+                f1_values.append(float(f1))
+            cq = row.get("cq_pass_rate")
+            if isinstance(cq, (int, float)):
+                cq_values.append(float(cq))
+            tokens = row.get("token_total")
+            if isinstance(tokens, (int, float)):
+                token_values.append(float(tokens))
+
+        def _stats(values: list[float]) -> tuple[float | None, float | None]:
+            if not values:
+                return None, None
+            m = sum(values) / len(values)
+            v = sum((x - m) ** 2 for x in values) / len(values)
+            return m, math.sqrt(v)
+
+        mean_f1, std_f1 = _stats(f1_values)
+        mean_cq, std_cq = _stats(cq_values)
+        mean_tokens, _ = _stats(token_values)
+        summaries.append(
+            {
+                "base_id": base_id,
+                "seed_count": len(rows),
+                "mean_f1": mean_f1,
+                "std_f1": std_f1,
+                "mean_cq_pass_rate": mean_cq,
+                "std_cq_pass_rate": std_cq,
+                "mean_token_total": mean_tokens,
+                "seeds": ",".join(sorted({str(r.get("seed")) for r in rows if r.get("seed") is not None})),
+            }
+        )
+    return summaries
+
+
 def main() -> None:
     args = parse_args()
     status = _read_json(args.status)
@@ -125,6 +187,7 @@ def main() -> None:
     master_rows = []
     error_rows = []
     seed_rows = []
+    rows_by_base: dict[str, list[dict]] = defaultdict(list)
 
     for item in status:
         if not isinstance(item, dict):
@@ -139,10 +202,12 @@ def main() -> None:
         if isinstance(runtime, (int, float)) and isinstance(token_total, int):
             # Lightweight proxy for efficiency tradeoff reporting.
             cost_proxy = (token_total / 1000.0) * float(runtime)
+        base_id, seed = _parse_seed_id(exp_id)
+        phase_id = item.get("phase_id", base_id if seed is not None else exp_id)
         master_rows.append(
             {
                 "id": exp_id,
-                "phase_id": item.get("phase_id", exp_id),
+                "phase_id": phase_id,
                 "layer": item.get("layer"),
                 "exit_code": item.get("exit_code"),
                 "runtime_seconds": item.get("runtime_seconds"),
@@ -156,22 +221,27 @@ def main() -> None:
         taxonomy_counts = _error_taxonomy_counts(run_root)
         for code, count in sorted(taxonomy_counts.items()):
             error_rows.append({"id": exp_id, "error_code": code, "count": count})
-        if exp_id.startswith("E-DIAG-4-S"):
-            seed_rows.append(
-                {
-                    "id": exp_id,
-                    "seed": exp_id.split("S", 1)[1],
-                    "f1_semantic": f1,
-                    "cq_pass_rate": cq_pass,
-                    "runtime_seconds": item.get("runtime_seconds"),
-                    "token_total": token_total,
-                }
-            )
+        if seed is not None:
+            seed_row = {
+                "id": exp_id,
+                "base_id": base_id,
+                "seed": seed,
+                "f1_semantic": f1,
+                "cq_pass_rate": cq_pass,
+                "runtime_seconds": item.get("runtime_seconds"),
+                "token_total": token_total,
+            }
+            seed_rows.append(seed_row)
+            rows_by_base[base_id].append(seed_row)
 
-    seed_summary = _seed_stats(seed_rows)
+    diag4_rows = [r for r in seed_rows if r.get("base_id") == "E-DIAG-4"]
+    seed_summary = _seed_stats(diag4_rows)
+    per_base_summaries = _aggregate_per_base(dict(rows_by_base))
+
     master_json = {
         "rows": master_rows,
         "seed_summary": seed_summary,
+        "per_base_seed_summary": per_base_summaries,
     }
     (args.outdir / "master_results.json").write_text(json.dumps(master_json, indent=2), encoding="utf-8")
 
@@ -195,12 +265,26 @@ def main() -> None:
     _write_csv(
         args.outdir / "seed_variance_table.csv",
         seed_rows,
-        ["id", "seed", "f1_semantic", "cq_pass_rate", "runtime_seconds", "token_total"],
+        ["id", "base_id", "seed", "f1_semantic", "cq_pass_rate", "runtime_seconds", "token_total"],
     )
     _write_csv(
         args.outdir / "seed_variance_summary.csv",
         [seed_summary],
         ["count", "mean_f1", "std_f1"],
+    )
+    _write_csv(
+        args.outdir / "novelty_seed_variance.csv",
+        per_base_summaries,
+        [
+            "base_id",
+            "seed_count",
+            "seeds",
+            "mean_f1",
+            "std_f1",
+            "mean_cq_pass_rate",
+            "std_cq_pass_rate",
+            "mean_token_total",
+        ],
     )
     print(f"Wrote tables to {args.outdir}")
 
